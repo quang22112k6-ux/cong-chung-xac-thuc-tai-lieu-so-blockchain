@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blockchain Notary: Công chứng & xác thực tài liệu số</title>
+<style>
+  :root { --bg:#1a0f3d; --panel:#2547d0; --card:#ffffff; --ink:#2b1068; --muted:#4a3a78; --accent:#67e8f9; --warn:#fbbf24; --ok:#16a34a; --bad:#dc2626; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:#f3efff; font-family:'Segoe UI', Arial, sans-serif; line-height:1.5; }
+  header { padding:28px 32px 8px; }
+  h1 { margin:0; font-size:28px; }
+  header p { margin:4px 0 0; color:#d9c6ff; }
+  main { max-width:1000px; margin:0 auto; padding:16px 24px 48px; display:grid; gap:20px; }
+  .card { background:var(--card); color:var(--ink); border-radius:16px; padding:20px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  #drop { border:3px dashed #7c3aed; border-radius:16px; padding:36px 16px; text-align:center; cursor:pointer; background:#f4f1ff; transition:.15s; }
+  #drop.over { background:#e3dbff; border-style:solid; }
+  #drop b { font-size:22px; }
+  #drop small { display:block; color:var(--muted); margin-top:6px; }
+  .hash { font-family:Consolas, monospace; word-break:break-all; background:#f4f1ff; border-radius:8px; padding:8px 10px; margin-top:10px; }
+  .tabs { display:flex; gap:8px; flex-wrap:wrap; }
+  .tab { border:0; border-radius:10px; padding:10px 18px; font-size:16px; font-weight:700; cursor:pointer; background:#e3dbff; color:var(--muted); }
+  .tab.active { background:#7c3aed; color:#fff; }
+  label { font-weight:600; display:block; margin:10px 0 4px; }
+  select, input[type=text] { width:100%; padding:10px; border-radius:8px; border:1px solid #c9b0f7; font-size:15px; }
+  button.go { background:var(--panel); color:#fff; border:0; border-radius:10px; padding:12px 22px; font-size:16px; font-weight:700; cursor:pointer; margin-top:14px; }
+  button.go:disabled { opacity:.45; cursor:not-allowed; }
+  .msg { margin-top:14px; padding:12px 14px; border-radius:10px; font-weight:600; }
+  .msg.ok { background:#dcfce7; color:#14532d; } .msg.bad { background:#fee2e2; color:#7f1d1d; } .msg.info { background:#e0e7ff; color:#1e3a8a; }
+  dl { display:grid; grid-template-columns:150px 1fr; gap:4px 12px; margin:10px 0 0; }
+  dt { font-weight:700; } dd { margin:0; word-break:break-all; }
+  .timeline { list-style:none; padding:0; margin:12px 0 0; display:grid; gap:10px; }
+  .timeline li { border-left:5px solid #7c3aed; background:#f4f1ff; padding:10px 14px; border-radius:0 10px 10px 0; }
+  .mono { font-family:Consolas, monospace; font-size:13px; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:99px; font-size:13px; font-weight:700; }
+  .pill.ok { background:#dcfce7; color:#14532d; } .pill.bad { background:#fee2e2; color:#7f1d1d; }
+  footer { text-align:center; color:#b7a8e6; padding:0 24px 32px; font-size:14px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Blockchain Notary</h1>
+  <p>File ở lại với bạn, bằng chứng nằm trên sổ cái. Trình duyệt chỉ gửi hash SHA-256, không gửi nội dung file.</p>
+</header>
+<main>
+  <section class="card">
+    <div id="drop" tabindex="0" role="button" aria-label="Thả file vào đây hoặc bấm để chọn file">
+      <b>Thả file vào đây</b>
+      <small>hoặc bấm để chọn file (hợp đồng, bằng cấp, chứng chỉ…)</small>
+      <input id="file" type="file" class="hidden">
+    </div>
+    <div id="fileInfo" class="hidden">
+      <dl>
+        <dt>Tên file</dt><dd id="fName"></dd>
+        <dt>Kích thước</dt><dd id="fSize"></dd>
+        <dt>SHA-256</dt><dd><div class="hash" id="fHash"></div></dd>
+      </dl>
+    </div>
+    <div id="hashErr" class="msg bad hidden"></div>
+  </section>
+
+  <section class="card">
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="register">Đăng ký</button>
+      <button class="tab" data-tab="version">Thêm phiên bản</button>
+      <button class="tab" data-tab="verify">Kiểm tra</button>
+      <button class="tab" data-tab="docs">Tài liệu & lịch sử</button>
+      <button class="tab" data-tab="chain">Sổ cái</button>
+    </div>
+
+    <div id="pane-register" class="pane">
+      <label for="walletR">Ví (chủ sở hữu)</label>
+      <div class="row"><select id="walletR" style="flex:1"></select><button class="tab" id="newWallet" type="button">+ Tạo ví</button></div>
+      <label for="noteR">Ghi chú (tuỳ chọn)</label>
+      <input id="noteR" type="text" maxlength="200" placeholder="Ví dụ: bản gốc">
+      <button class="go" id="btnRegister" disabled>Công chứng</button>
+    </div>
+
+    <div id="pane-version" class="pane hidden">
+      <label for="docSel">Tài liệu cần thêm phiên bản</label>
+      <select id="docSel"></select>
+      <label for="walletV">Ví (phải là chủ sở hữu)</label>
+      <select id="walletV"></select>
+      <label for="noteV">Ghi chú (tuỳ chọn)</label>
+      <input id="noteV" type="text" maxlength="200" placeholder="Ví dụ: sửa điều khoản 3">
+      <button class="go" id="btnVersion" disabled>Thêm phiên bản mới</button>
+    </div>
+
+    <div id="pane-verify" class="pane hidden">
+      <p>Thả file vào khung phía trên, hệ thống tính lại hash rồi đối chiếu với sổ cái.</p>
+      <button class="go" id="btnVerify" disabled>Kiểm tra lại</button>
+    </div>
+
+    <div id="pane-docs" class="pane hidden"><div id="docsList"></div></div>
+    <div id="pane-chain" class="pane hidden"><div id="chainBox"></div></div>
+
+    <div id="result" class="hidden"></div>
+  </section>
+</main>
+<footer>Bản demo học tập: sổ cái chạy cục bộ trên máy bạn. Hệ thống chứng minh toàn vẹn và thời điểm; danh tính ngoài đời cần eKYC hoặc công chứng.</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const state = { file: null, hash: null, tab: 'register', docs: [], wallets: [] };
+
+function fmtSize(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n/1024).toFixed(1) + ' KB' : (n/1048576).toFixed(2) + ' MB'; }
+function fmtTime(ms) { return new Date(ms).toLocaleString('vi-VN'); }
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  Object.assign(e, props);
+  kids.forEach(k => e.append(k));
+  return e;
+}
+function showMsg(kind, text, node) {
+  const box = $('result');
+  box.className = '';
+  box.replaceChildren(el('div', { className: 'msg ' + kind, textContent: text }));
+  if (node) box.append(node);
+}
+function recordDl(b, extra = []) {
+  const rows = [['Mã tài liệu', b.docId], ['Phiên bản', 'v' + b.version], ['Tên file lúc đăng ký', b.fileName || '(không có)'],
+    ['Chủ sở hữu (ví)', b.owner], ['Thời điểm ghi nhận', fmtTime(b.timestamp)], ['Ghi chú', b.note || '(không có)'],
+    ['Khối số', '#' + b.index], ['Hash khối', b.hash], ...extra];
+  const dl = el('dl');
+  rows.forEach(([k, v]) => dl.append(el('dt', { textContent: k }), el('dd', { textContent: v })));
+  return dl;
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({ error: 'Phản hồi không hợp lệ' }));
+  if (!r.ok) throw new Error(j.error || ('Lỗi ' + r.status));
+  return j;
+}
+const post = (path, data) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(data) });
+
+// ---------- Băm file ngay trên trình duyệt ----------
+async function sha256Hex(file) {
+  if (!(window.crypto && crypto.subtle)) throw new Error('Trình duyệt không hỗ trợ Web Crypto (cần HTTPS hoặc localhost).');
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function handleFile(file) {
+  if (!file) return;
+  $('hashErr').className = 'msg bad hidden';
+  $('result').className = 'hidden';
+  state.file = file; state.hash = null;
+  $('fileInfo').classList.remove('hidden');
+  $('fName').textContent = file.name; $('fSize').textContent = fmtSize(file.size); $('fHash').textContent = 'Đang tính hash…';
+  setButtons();
+  try {
+    state.hash = await sha256Hex(file);
+    $('fHash').textContent = state.hash;
+  } catch (e) {
+    $('fHash').textContent = '';
+    $('hashErr').textContent = e.message; $('hashErr').classList.remove('hidden');
+  }
+  setButtons();
+  if (state.hash && state.tab === 'verify') verify();
+}
+function setButtons() {
+  const ok = !!state.hash;
+  $('btnRegister').disabled = !ok || !$('walletR').value;
+  $('btnVersion').disabled = !ok || !$('docSel').value || !$('walletV').value;
+  $('btnVerify').disabled = !ok;
+}
+
+// ---------- Kéo-thả ----------
+const drop = $('drop');
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => handleFile(e.dataTransfer.files[0]));
+drop.addEventListener('click', () => $('file').click());
+drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
+$('file').addEventListener('change', e => { handleFile(e.target.files[0]); e.target.value = ''; });
+// Chặn trình duyệt mở file khi thả ra ngoài khung
+['dragover', 'drop'].forEach(ev => window.addEventListener(ev, e => e.preventDefault()));
+
+// ---------- Tab ----------
+$('tabs').addEventListener('click', e => {
+  const t = e.target.closest('.tab[data-tab]'); if (!t) return;
+  state.tab = t.dataset.tab;
+  document.querySelectorAll('#tabs .tab').forEach(b => b.classList.toggle('active', b === t));
+  document.querySelectorAll('.pane').forEach(p => p.classList.add('hidden'));
+  $('pane-' + state.tab).classList.remove('hidden');
+  $('result').className = 'hidden';
+  if (state.tab === 'docs') loadDocs();
+  if (state.tab === 'chain') loadChain();
+  if (state.tab === 'verify' && state.hash) verify();
+  if (state.tab === 'version') loadDocOptions();
+});
+
+// ---------- Ví và tài liệu ----------
+async function loadWallets() {
+  const { wallets } = await api('/api/wallets');
+  state.wallets = wallets;
+  for (const id of ['walletR', 'walletV']) {
+    const sel = $(id), cur = sel.value;
+    sel.replaceChildren(...wallets.map(w => el('option', { value: w.name, textContent: w.name + '  (' + w.address.slice(0, 10) + '…' + w.address.slice(-6) + ')' })));
+    if (cur) sel.value = cur;
+  }
+  setButtons();
+}
+async function loadDocOptions() {
+  const { docs } = await api('/api/docs');
+  state.docs = docs;
+  const sel = $('docSel');
+  sel.replaceChildren(...docs.map(d => el('option', { value: d.docId, textContent: d.docId + ' · ' + (d.fileName || 'không tên') + ' · v' + d.latestVersion })));
+  setButtons();
+}
+$('newWallet').addEventListener('click', async () => {
+  const name = prompt('Tên ví mới (chữ, số, - hoặc _):');
+  if (!name) return;
+  try { await post('/api/wallets', { name }); await loadWallets(); $('walletR').value = name; setButtons(); }
+  catch (e) { showMsg('bad', e.message); }
+});
+['walletR', 'walletV', 'docSel'].forEach(id => $(id).addEventListener('change', setButtons));
+
+// ---------- Hành động ----------
+$('btnRegister').addEventListener('click', async () => {
+  try {
+    const r = await post('/api/register', { hash: state.hash, fileName: state.file.name, size: state.file.size, wallet: $('walletR').value, note: $('noteR').value });
+    showMsg('ok', 'Đã công chứng thành công. Chỉ hash được ghi vào sổ cái, file của bạn không rời khỏi máy.', recordDl(r.block));
+  } catch (e) { showMsg('bad', e.message); }
+});
+$('btnVersion').addEventListener('click', async () => {
+  try {
+    const r = await post('/api/version', { docId: $('docSel').value, hash: state.hash, fileName: state.file.name, size: state.file.size, wallet: $('walletV').value, note: $('noteV').value });
+    showMsg('ok', 'Đã thêm phiên bản v' + r.block.version + '. Các phiên bản cũ được giữ nguyên.', recordDl(r.block));
+    loadDocOptions();
+  } catch (e) { showMsg('bad', e.message); }
+});
+async function verify() {
+  try {
+    const r = await api('/api/verify?hash=' + encodeURIComponent(state.hash));
+    if (!r.found) {
+      showMsg('bad', 'Không tìm thấy: file chưa được đăng ký hoặc đã bị thay đổi so với bản đã đăng ký. (Nén lại hoặc lưu lại file cũng làm hash thay đổi.)');
+      return;
+    }
+    const extra = [['Trạng thái phiên bản', r.isLatest ? 'Đây là phiên bản mới nhất' : 'Đây là bản cũ (v' + r.block.version + '), bản mới nhất là v' + r.latestVersion]];
+    showMsg(r.isLatest ? 'ok' : 'info', r.isLatest ? 'Hợp lệ: nội dung file khớp với bản đã đăng ký.' : 'Khớp một phiên bản cũ của tài liệu.', recordDl(r.block, extra));
+  } catch (e) { showMsg('bad', e.message); }
+}
+$('btnVerify').addEventListener('click', verify);
+
+async function loadDocs() {
+  const { docs } = await api('/api/docs');
+  const box = $('docsList');
+  if (!docs.length) { box.replaceChildren(el('p', { textContent: 'Chưa có tài liệu nào được đăng ký.' })); return; }
+  box.replaceChildren(el('p', { textContent: 'Bấm một tài liệu để xem lịch sử phiên bản.' }), ...docs.map(d => {
+    const b = el('button', { className: 'tab', type: 'button', textContent: d.docId + ' · ' + (d.fileName || 'không tên') + ' · ' + d.latestVersion + ' phiên bản' });
+    b.style.display = 'block'; b.style.margin = '6px 0';
+    b.addEventListener('click', () => showHistory(d.docId));
+    return b;
+  }));
+}
+async function showHistory(id) {
+  const d = await api('/api/doc?id=' + encodeURIComponent(id));
+  const ul = el('ul', { className: 'timeline' }, ...d.versions.map(v => el('li', {},
+    el('b', { textContent: 'v' + v.version + ' · ' + fmtTime(v.timestamp) }), el('br'),
+    el('span', { textContent: (v.fileName || 'không tên') + (v.note ? ' · ' + v.note : '') }), el('br'),
+    el('span', { className: 'mono', textContent: v.fileHash }))));
+  showMsg('info', 'Lịch sử của ' + d.docId + ' (chủ sở hữu ' + d.owner + ')', ul);
+}
+async function loadChain() {
+  const c = await api('/api/chain');
+  const box = $('chainBox');
+  const status = el('div', { className: 'msg ' + (c.valid ? 'ok' : 'bad'), textContent: c.valid ? 'Sổ cái hợp lệ: ' + c.length + ' khối, liên kết và chữ ký đều đúng.' : 'Sổ cái KHÔNG hợp lệ: ' + c.error });
+  const ul = el('ul', { className: 'timeline' }, ...c.blocks.slice().reverse().map(b => el('li', {},
+    el('b', { textContent: '#' + b.index + (b.version ? ' · ' + b.docId + ' v' + b.version : ' · khối khởi tạo') }), el('br'),
+    el('span', { className: 'mono', textContent: 'hash: ' + b.hash.slice(0, 32) + '…  prev: ' + b.prevHash.slice(0, 16) + '…' }))));
+  box.replaceChildren(status, ul);
+}
+
+loadWallets().catch(e => showMsg('bad', e.message));
+</script>
+</body>
+</html>
